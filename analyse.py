@@ -1,6 +1,5 @@
 """
-[(u'cafe', 8834), (u'school', 8902), (u'bench', 9037), (u'pharmacy', 9383), (u'hospital', 9816), (u'fast_food', 12198), (u'place_of_worship', 18034), (u'atm', 19757), (u'bank', 19831), (u'restaurant', 40654)]
-
+Helper file used while doing some analytics on top of data
 """
 import pymongo
 

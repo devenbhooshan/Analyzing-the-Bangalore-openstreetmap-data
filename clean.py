@@ -1,27 +1,11 @@
 """
-Number of node and way tags : 34,67,549
-number of nodes
+This file finds the problem in the map data and then cleans it.
 
-('node', 2818712),
- ('nd', 3498457),
- ('bounds', 1),
- ('member', 4604),
- ('tag', 758108),
- ('relation', 894),
- ('way', 648837),
- ('osm', 1)
+The data is a grid of following parameters
 
-Problems
-Post code of
- 1 non numeric postal code
- 2 560 090 - > 560090
- 3 79 -> 560079
+min lat long = [12.75,77.35]
+max lat long = [13.23, 77.85]
 
-
- <osm version="0.6" generator="osmconvert 0.7T" timestamp="2016-01-30T00:31:01Z">
-	<bounds minlat="12.75" minlon="77.35" maxlat="13.23" maxlon="77.85"/>
-	[12.75,77.35]
-	[77.35, 12.75]
 """
 
 import xml.etree.cElementTree as et
@@ -31,10 +15,18 @@ from collections import defaultdict
 import json
 import codecs
 
-check_data = defaultdict(int)
-mapping = {"Rd.": "Road","Rd": "Road"}
+# Only these high level tags are put in the document
+VALID_TAGS = ['way', 'node']
+# Transformation mapping used while transforming the street names
+MAPPING = {"Rd.": "Road","Rd": "Road"}
+# Keys used to create the 'created' sub document
+CREATED_KEYS = ["version", "changeset", "timestamp", "user", "uid"]
+# Keys to be check for 'address' sub document
+TAG_XML_ADDRESS_KEYS = ['addr:housenumber', 'addr:street', 'addr:postcode' ]
 
 
+# This function takes the raw postal code and returns the corrected one. If it is not able to correct it ,
+#  it returns None
 def correct_postal_code(postcode):
     postcode = "".join(postcode.split(" "))
     if unicode(postcode).isnumeric() and len(postcode) == 6:
@@ -43,100 +35,86 @@ def correct_postal_code(postcode):
         return None
 
 
-def update_street_name(name):
-    m = constants.REGULAR_EXPRESSION_STREET_TYPE.search(name)
-    if m:
-        street_type = m.group()
-        if street_type in mapping:
-            return constants.REGULAR_EXPRESSION_STREET_TYPE.sub(mapping[street_type],name)
-
-    return name
-
-
+# This function takes the raw street code and returns the corrected one. If it is not able to correct it ,
+#  it returns None
 def correct_street(street):
+
+    # removes any spaces between the postalcodes
     street = " ".join([st.title() for st in street.split(" ")])
+
+    # search for 'bangalore' city name at the end. It also search for trailing commas and spaces.
     result = constants.REGULAR_EXPRESSION_BANGALORE_AT_THE_END.search(street.lower())
-    if result is not None:
+    if result:
+        # if 'bangalore' is found remove it
         street = street[0:result.start()]
 
-    return update_street_name(street)
+    # search for street type
+    result = constants.REGULAR_EXPRESSION_STREET_TYPE.search(street)
+    if result is not None:
+        street_type = result.group()
+        if street_type in MAPPING:
+            return constants.REGULAR_EXPRESSION_STREET_TYPE.sub(MAPPING[street_type],street)
+
+    return street
 
 
-def clean_element(element):
-    node = {}
-    parent_attrib = element.attrib
-
-    try:
-        node[constants.OSM_USER_KEY] = parent_attrib[constants.OSM_USER_KEY]
-    except:
-        pass
-
-    for child in element.iter(constants.TAG):
-        attributes = child.attrib
-
-        if attributes[constants.KEY] == constants.OSM_POST_CODE_KEY:
-            corrected_postal_code = correct_postal_code(attributes[constants.VALUE])
-            if corrected_postal_code is not None:
-                node[constants.MONGO_POST_CODE_KEY] = corrected_postal_code
-            else:
-                return None
-        elif attributes[constants.KEY] == constants.OSM_STREET_KEY:
-
-            street = correct_street(attributes[constants.VALUE])
-            if street:
-                node[constants.MONGO_STREET_KEY] = street
-            else:
-                return None
-
-        elif attributes[constants.KEY] == constants.OSM_HIGHWAY_KEY:
-            node[attributes[constants.KEY]] = attributes[constants.VALUE]
-
-
-
-    #print node
-    return node
-
-
-CREATED = [ "version", "changeset", "timestamp", "user", "uid"]
-
+# this function shapes/corrects the element of presents as the xml tags. If it is not able to correct
+# the element, it returns None
 
 def shape_element(element):
-    node = {}
+    node = dict()
     node['created'] = {}
-    if element.tag == "node" or element.tag == "way":
+    # only uses 'node' or 'way' xml tags
+    if element.tag in VALID_TAGS:
         node['type'] = element.tag
+
+        # element.attrib gives all the attributes of the element
         attributes = element.attrib
         node['id'] = attributes['id']
-        tag_keys = ['addr:housenumber', 'addr:street', 'addr:postcode' ]
 
+        # puts lat long as an list inside 'pos' doc
         if 'lat' in attributes:
-            node['pos'] = [float(attributes['lat']) ,float(attributes['lon']) ]
+            # flat(attributes['lat']) type casts attributes['lat'] to 'float'
+            node['pos'] = [float(attributes['lat']), float(attributes['lon'])]
+
         if 'visible' in attributes:
             node['visible'] = attributes['visible']
 
-        for cr in CREATED:
+        # iterates through all the CREATED_KEY and puts key value pair in the node
+        for cr in CREATED_KEYS:
             node['created'][cr] = attributes[cr]
-        for el in element.iter("tag"):
 
-            if el.attrib[constants.KEY] in tag_keys:
+        # iterate through all the 'tag' sub element
+        for el in element.iter("tag"):
+            # Allow 'tag' with keys like postal and
+            if el.attrib[constants.KEY] in TAG_XML_ADDRESS_KEYS:
+                # creates address sub document if it not there
                 if 'address' not in node:
                     node['address'] = {}
+                # puts corrected post code. if not able to correct it, returns None
                 if el.attrib[constants.KEY] == constants.OSM_POST_CODE_KEY:
                     corrected_postal_code = correct_postal_code(el.attrib[constants.VALUE])
                     if corrected_postal_code is not None:
                         node['address'][constants.MONGO_POST_CODE_KEY] = corrected_postal_code
                     else:
                         return None
+                # puts corrected street. if not able to correct it, returns None
                 elif el.attrib[constants.KEY] == constants.OSM_STREET_KEY:
-                    street = correct_street(el.attrib[constants.VALUE])
-                    if street:
-                        node['address'][constants.MONGO_STREET_KEY] = street
+                    corrected_street = correct_street(el.attrib[constants.VALUE])
+                    if corrected_street:
+                        node['address'][constants.MONGO_STREET_KEY] = corrected_street
                     else:
                         return None
+                # puts house number.
+                elif el.attrib[constants.KEY] == constants.OSM_HOUSE_NUMBER_KEY:
+                    node['address'][constants.MONGO_HOUSE_NUMBER_KEY] = el.attrib[constants.VALUE]
+
+            # Ignore all other 'tag' with 'addr' keys
             elif 'addr' in el.attrib[constants.KEY]:
                 pass
             else:
                 node[el.attrib[constants.KEY]] = el.attrib[constants.VALUE]
+        # put all the node ref in 'node_refs' subdocument
         for el in element.iter("nd"):
             if 'node_refs' not in node:
                 node['node_refs'] = []
@@ -146,8 +124,8 @@ def shape_element(element):
         return None
 
 
-def process_map(file_in, pretty = False):
-    # You do not need to change this file
+def process_map(file_in, pretty=False):
+
     file_out = "{0}.json".format(file_in)
     data = []
     with codecs.open(file_out, "w") as fo:

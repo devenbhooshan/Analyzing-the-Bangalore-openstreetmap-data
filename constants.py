@@ -7,6 +7,8 @@ VALUE = 'v'
 
 OSM_POST_CODE_KEY = 'addr:postcode'
 OSM_CITY_KEY = 'addr:city'
+OSM_HOUSE_NUMBER_KEY ='addr:housenumber'
+MONGO_HOUSE_NUMBER_KEY ='housenumber'
 OSM_HIGHWAY_KEY = 'highway'
 MONGO_POST_CODE_KEY = 'postcode'
 MONGO_CITY_KEY = 'city'
